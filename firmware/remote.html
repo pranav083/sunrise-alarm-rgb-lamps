@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sunset Remote Tester</title>
+<style>
+  :root { --bg:#f4f4f2; --card:#fff; --ink:#1c1c1c; --muted:#6b6b6b; --ok:#1f9d55; --bad:#d64545; --line:#ddd; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#161616; --card:#222; --ink:#eee; --muted:#999; --line:#333; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.4 -apple-system,system-ui,sans-serif; }
+  main { max-width:520px; margin:0 auto; padding:16px; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .sub { color:var(--muted); margin:0 0 14px; font-size:13px; }
+  .host { display:flex; gap:8px; margin-bottom:14px; }
+  .host input { flex:1; padding:8px; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); }
+  .remote { background:var(--card); border:1px solid var(--line); border-radius:22px; padding:18px; display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+  .cell { display:flex; flex-direction:column; align-items:center; gap:4px; }
+  button.key { width:64px; height:64px; border-radius:50%; border:2px solid rgba(0,0,0,.15); font-weight:700; font-size:12px; cursor:pointer; color:#111; transition:transform .08s; }
+  button.key:active { transform:scale(.92); }
+  button.key.sent { outline:3px solid #3b82f6; outline-offset:2px; }
+  .code { font:11px ui-monospace,monospace; color:var(--muted); }
+  .marks { display:flex; gap:4px; }
+  .marks button { border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:6px; font-size:12px; padding:1px 7px; cursor:pointer; }
+  .marks button.on.y { background:var(--ok); color:#fff; border-color:var(--ok); }
+  .marks button.on.n { background:var(--bad); color:#fff; border-color:var(--bad); }
+  .pred { font-size:10px; color:#b7791f; }
+  .bar { margin-top:14px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .bar button { padding:8px 12px; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--ink); cursor:pointer; }
+  #log { margin-top:10px; font:12px ui-monospace,monospace; color:var(--muted); min-height:1.4em; }
+  #summary { width:100%; margin-top:10px; height:90px; font:12px ui-monospace,monospace; background:var(--card); color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:8px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Sunset lamp remote tester</h1>
+  <p class="sub">Tap a button → the board fires that IR code at the lamp. Then mark ✓ if the lamp did what the label says, ✗ if not.</p>
+  <div class="host"><input id="host" value="192.168.1.50" aria-label="Board address"></div>
+  <div class="remote" id="remote"></div>
+  <div class="bar">
+    <button id="sunrise">▶ Sunrise</button>
+    <select id="dur" aria-label="Sunrise length">
+      <option value="60">1 min preview</option>
+      <option value="300">5 min</option>
+      <option value="1200">20 min (real)</option>
+    </select>
+    <button id="stop">■ Stop</button>
+    <button id="steps">🔅 Brightness step test</button>
+    <button id="reset">Clear marks</button>
+    <span id="score"></span>
+  </div>
+  <div id="log"></div>
+  <textarea id="summary" readonly placeholder="Results appear here — copy and paste them back to Claude."></textarea>
+</main>
+<script>
+const KEYS = [
+  ["Bright +","0xF700FF","#fff"],["Bright −","0xF7807F","#fff"],["OFF","0xF740BF","#222",1],["ON","0xF7C03F","#e5483b"],
+  ["R","0xF720DF","#e0463a"],["G","0xF7A05F","#27a060"],["B","0xF7609F","#2c48c0"],["W","0xF7E01F","#fff"],
+  ["Orange-red","0xF710EF","#ec6a45",0,true],["Light green","0xF7906F","#7ccb5a"],["Light blue","0xF750AF","#3d8ce6"],["FLASH","0xF7D02F","#666",1],
+  ["Orange","0xF730CF","#f08a4b"],["Cyan","0xF7B04F","#56c1d8"],["Purple","0xF7708F","#7b2f86",1],["STROBE","0xF7F00F","#666",1],
+  ["Light orange","0xF708F7","#f3a54a"],["Teal","0xF78877","#2a93b5"],["Violet","0xF748B7","#7d2a7a",1],["FADE","0xF7C837","#666",1],
+  ["Yellow","0xF728D7","#f4e02c"],["Dark blue","0xF7A857","#1e5d8c",1],["Pink","0xF76897","#d23a8a",1],["SMOOTH","0xF7E817","#666",1],
+];
+let marks = {};
+try { marks = JSON.parse(localStorage.getItem("marks") || "{}"); } catch (e) {}
+const $ = id => document.getElementById(id);
+
+function send(label, quiet) {
+  const k = KEYS.find(k => k[0] === label);
+  const url = `http://${$("host").value.trim()}/send?proto=NEC&value=${k[1]}&bits=32`;
+  document.querySelectorAll("button.key").forEach(b => b.classList.toggle("sent", b.dataset.l === label));
+  if (!quiet) $("log").textContent = `→ ${label} ${k[1]} …`;
+  fetch(url, { mode: "no-cors" })
+    .then(() => { if (!quiet) $("log").textContent = `✓ sent ${label} ${k[1]} — did the lamp respond?`; })
+    .catch(e => $("log").textContent = `✗ couldn't reach board (${e.message}). Check address / same Wi-Fi.`);
+}
+
+function render() {
+  const r = $("remote"); r.innerHTML = "";
+  for (const [label, code, color, dark, pred] of KEYS) {
+    const c = document.createElement("div"); c.className = "cell";
+    const b = document.createElement("button"); b.className = "key"; b.dataset.l = label;
+    b.style.background = color; if (dark) b.style.color = "#fff";
+    b.textContent = label.length > 7 ? "" : label; b.title = label;
+    b.onclick = () => send(label);
+    const name = document.createElement("div"); name.className = "code"; name.textContent = label;
+    const m = document.createElement("div"); m.className = "marks";
+    for (const [v, t] of [["y","✓"],["n","✗"]]) {
+      const x = document.createElement("button"); x.textContent = t; x.className = v + (marks[label] === v ? " on" : "");
+      x.onclick = () => { marks[label] = marks[label] === v ? undefined : v; save(); render(); };
+      m.append(x);
+    }
+    c.append(b, name);
+    if (pred) { const p = document.createElement("div"); p.className = "pred"; p.textContent = "unconfirmed"; c.append(p); }
+    c.append(m); r.append(c);
+  }
+  const vals = Object.values(marks).filter(Boolean);
+  $("score").textContent = `${vals.filter(v=>v==="y").length} ✓ · ${vals.filter(v=>v==="n").length} ✗ · ${KEYS.length - vals.length} untested`;
+  $("summary").value = KEYS.map(k => `${k[0].padEnd(13)} ${k[1]}  ${marks[k[0]] === "y" ? "OK" : marks[k[0]] === "n" ? "FAIL" : "-"}`).join("\n");
+}
+function save() { try { localStorage.setItem("marks", JSON.stringify(marks)); } catch (e) {} }
+
+$("reset").onclick = () => { marks = {}; save(); render(); };
+// Sunrise: the lamp has 6 brightness levels (max + 5 Bright− steps, measured 2026-09-28).
+// Stages alternate "brighter" and "warmer"; times are fractions of the total, slow at the dim start.
+const STAGES = [
+  [0.00, "R",            0],
+  [0.18, "R",            1],
+  [0.32, "Orange-red",   1],
+  [0.44, "Orange-red",   2],
+  [0.54, "Orange",       2],
+  [0.63, "Orange",       3],
+  [0.71, "Light orange", 3],
+  [0.79, "Light orange", 4],
+  [0.86, "Yellow",       4],
+  [0.93, "Yellow",       5],
+  [1.00, "W",            5],
+];
+let sunriseRun = 0;
+const fmt = s => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
+$("stop").onclick = () => { sunriseRun++; $("log").textContent = "Sunrise stopped."; };
+$("sunrise").onclick = async () => {
+  const run = ++sunriseRun, total = +$("dur").value;
+  const alive = () => run === sunriseRun;
+  // Colour commands are idempotent, so send them twice to survive Wi-Fi drops.
+  // Brightness commands are NOT (each press = one step), so send those once.
+  const color = async c => { send(c, true); await sleep(300); send(c, true); };
+  $("log").textContent = "Setting up: ON, red, dimmest…";
+  await color("ON"); await sleep(800); await color("R"); await sleep(800);
+  for (let i = 0; i < 7; i++) { send("Bright −", true); await sleep(350); } // floor it: level 0
+  let level = 0, t0 = Date.now();
+  for (const [frac, c, lvl] of STAGES) {
+    const due = t0 + frac * total * 1000;
+    while (Date.now() < due) {
+      if (!alive()) return;
+      $("log").textContent = `Sunrise ${fmt((Date.now() - t0) / 1000)} / ${fmt(total)} — next: ${c}, brightness ${lvl}/5`;
+      await sleep(250);
+    }
+    if (!alive()) return;
+    await color(c);
+    while (level < lvl) { await sleep(300); send("Bright +", true); level++; }
+  }
+  $("log").textContent = `Sunrise complete (${fmt(total)}). White, full brightness.`;
+};
+// Brightness step test: max brightness, then one Bright− every 3 s with an on-screen counter,
+// so the viewer can count how many presses actually make the lamp dimmer.
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+$("steps").onclick = async () => {
+  $("steps").disabled = true;
+  send("ON", true); await sleep(1000); send("R", true); await sleep(1000);
+  for (let i = 1; i <= 15; i++) { send("Bright +", true); $("log").textContent = `Going to max brightness… ${i}/15`; await sleep(400); }
+  $("log").textContent = "At max. Stepping down in 3 s — count the visible dimming steps!"; await sleep(3000);
+  for (let i = 1; i <= 15; i++) {
+    send("Bright −", true);
+    $("log").textContent = `Bright − press ${i} of 15 — did it get dimmer?`;
+    await sleep(3000);
+  }
+  $("log").textContent = "Done. How many presses visibly dimmed the lamp? Tell Claude the number.";
+  $("steps").disabled = false;
+};
+render();
+</script>
+</body>
+</html>

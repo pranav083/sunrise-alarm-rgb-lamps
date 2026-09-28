@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sunrise Alarm</title>
+<style>
+  :root { --bg:#fbf7f2; --card:#fff; --ink:#221c17; --muted:#7a6f66; --accent:#e8743b; --line:#eadfd4; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#16120f; --card:#211b17; --ink:#f3ebe3; --muted:#a3978c; --line:#3a302a; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.4 -apple-system,system-ui,sans-serif; }
+  main { max-width:460px; margin:0 auto; padding:16px; }
+  h1 { font-size:22px; margin:4px 0 12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:12px; }
+  label { display:flex; justify-content:space-between; align-items:center; padding:8px 0; gap:12px; }
+  input[type=time], input[type=number], select { font:inherit; padding:6px 8px; border:1px solid var(--line); border-radius:8px; background:var(--bg); color:var(--ink); }
+  .days { display:flex; gap:6px; flex-wrap:wrap; }
+  .days button { width:40px; height:36px; border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--ink); font-weight:600; }
+  .days button.on { background:var(--accent); border-color:var(--accent); color:#fff; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; }
+  .btn { flex:1; padding:12px; border-radius:10px; border:0; font:600 16px system-ui; background:var(--accent); color:#fff; }
+  .btn.secondary { background:var(--line); color:var(--ink); }
+  #status { font-size:14px; color:var(--muted); white-space:pre-line; }
+  #msg { min-height:1.2em; font-size:14px; color:var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>🌅 Sunrise Alarm</h1>
+  <div class="card">
+    <label>Alarm on <input type="checkbox" id="enabled"></label>
+    <label>Wake time <input type="time" id="wake"></label>
+    <div class="days" id="days"></div>
+    <label>Sunrise length (min) <input type="number" id="length_min" min="10" max="60"></label>
+    <label>Stay lit after (min) <input type="number" id="hold_min" min="0" max="240"></label>
+    <label>Stay on until I stop it <input type="checkbox" id="stay_on"></label>
+    <label>Floor lamp (Bluetooth) <input type="checkbox" id="floor"></label>
+    <label>Sunset lamp (IR) <input type="checkbox" id="sunset"></label>
+    <button class="btn" id="save">Save</button>
+    <div id="msg"></div>
+  </div>
+  <div class="card">
+    <div class="row">
+      <select id="demoLen" aria-label="Demo length"><option value="30">30 s</option><option value="60">1 min</option><option value="300">5 min</option></select>
+      <button class="btn secondary" id="demo">▶ Demo</button>
+      <button class="btn" id="wake">☀ I'm up</button>
+      <button class="btn" id="stop">■ Lights off</button>
+    </div>
+  </div>
+  <div class="card"><div id="status">Loading…</div></div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const DAYS = ["Mo","Tu","We","Th","Fr","Sa","Su"];
+let days = [];
+function renderDays() {
+  $("days").innerHTML = "";
+  DAYS.forEach((n, i) => {
+    const b = document.createElement("button"); b.textContent = n; b.className = days.includes(i) ? "on" : "";
+    b.onclick = () => { days = days.includes(i) ? days.filter(d => d !== i) : [...days, i].sort(); renderDays(); };
+    $("days").append(b);
+  });
+}
+async function load() {
+  const s = await (await fetch("/api/settings")).json();
+  for (const k of ["wake","length_min","hold_min"]) $(k).value = s[k];
+  for (const k of ["enabled","stay_on","floor","sunset"]) $(k).checked = s[k];
+  days = s.days; renderDays();
+}
+$("save").onclick = async () => {
+  const body = { wake:$("wake").value, days, length_min:+$("length_min").value, hold_min:+$("hold_min").value,
+    enabled:$("enabled").checked, stay_on:$("stay_on").checked, floor:$("floor").checked, sunset:$("sunset").checked };
+  const r = await fetch("/api/settings", { method:"PUT", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body) });
+  $("msg").textContent = r.ok ? "Saved ✓" : "Error: " + (await r.json()).error;
+};
+$("demo").onclick = async () => {
+  const r = await fetch("/api/demo", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({seconds:+$("demoLen").value}) });
+  $("msg").textContent = r.ok ? "Demo started" : (await r.json()).error;
+};
+$("wake").onclick = async () => { await fetch("/api/wake", { method:"POST" }); $("msg").textContent = "Enjoy the light ☀"; };
+$("stop").onclick = async () => { await fetch("/api/stop", { method:"POST" }); $("msg").textContent = "Lights off"; };
+async function poll() {
+  try {
+    const s = await (await fetch("/api/status")).json();
+    const lamps = Object.entries(s.lamps).map(([n, up]) => `${n}: ${up ? "connected" : "not connected"}`).join(", ");
+    $("status").textContent =
+      `State: ${s.state}${s.progress != null ? ` (${Math.round(s.progress * 100)}%)` : ""}\n` +
+      `Next sunrise starts: ${s.next_start ? s.next_start.replace("T", " ") : "—"}\n` +
+      (lamps ? `Lamps: ${lamps}\n` : "") + `Last run: ${s.last_result || "—"}`;
+  } catch { $("status").textContent = "Service unreachable"; }
+}
+load(); poll(); setInterval(poll, 2000);
+</script>
+</body>
+</html>
