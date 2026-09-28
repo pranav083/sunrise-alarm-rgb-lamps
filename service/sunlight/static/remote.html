@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sunrise Alarm — Remote</title>
+<style>
+  :root { --bg:#fbf7f2; --card:#fff; --ink:#221c17; --muted:#7a6f66; --accent:#e8743b; --line:#eadfd4; --ok:#1f9d55; --bad:#d64545; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#16120f; --card:#211b17; --ink:#f3ebe3; --muted:#a3978c; --line:#3a302a; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.4 -apple-system,system-ui,sans-serif; }
+  main { max-width:920px; margin:0 auto; padding:16px; }
+  h1 { font-size:22px; margin:4px 0 4px; }
+  h2 { font-size:16px; margin:0 0 10px; }
+  .sub { color:var(--muted); margin:0 0 14px; font-size:13px; }
+  .remotes { display:flex; gap:16px; flex-wrap:wrap; align-items:flex-start; justify-content:center; }
+  .remote-wrap { flex:1 1 300px; max-width:340px; }
+  .remote { background:var(--card); border:1px solid var(--line); border-radius:22px; padding:16px; display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+  button.key { width:100%; aspect-ratio:1; border-radius:50%; border:2px solid rgba(0,0,0,.15); font-weight:700; font-size:10px; cursor:pointer; color:#111; transition:transform .08s; padding:2px; }
+  button.key:active { transform:scale(.92); }
+  button.key.sent { outline:3px solid #3b82f6; outline-offset:2px; }
+  .note { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px 14px; margin:14px 0; font-size:13px; color:var(--muted); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin:14px 0; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .btn { padding:10px 16px; border-radius:10px; border:0; font:600 14px system-ui; background:var(--accent); color:#fff; cursor:pointer; }
+  .btn.secondary { background:var(--line); color:var(--ink); }
+  .presets { display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+  .presets button { padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--ink); font-size:12px; cursor:pointer; }
+  input[type=range] { width:100%; }
+  input[type=color] { width:52px; height:36px; border:1px solid var(--line); border-radius:8px; background:var(--card); padding:2px; }
+  #status { font-size:14px; color:var(--muted); min-height:1.4em; margin-top:8px; }
+  a { color:var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>🎛 Remote</h1>
+  <p class="sub">Tap a button to fire that IR code, or use Bluetooth for the floor lamp's colour.</p>
+
+  <div class="remotes">
+    <div class="remote-wrap">
+      <h2>Sunset lamp remote</h2>
+      <div class="remote" id="sunsetRemote"></div>
+    </div>
+    <div class="remote-wrap">
+      <h2>Floor lamp remote</h2>
+      <div class="remote" id="floorRemote"></div>
+    </div>
+  </div>
+
+  <div class="note">
+    Both lamps obey the same IR codes. If the IR board can see both lamps, a button here also
+    triggers the other lamp's button in the same position. Aim the board at one lamp.
+  </div>
+
+  <div class="card">
+    <h2>Floor lamp (Bluetooth)</h2>
+    <div class="row">
+      <button class="btn" id="floorOn">On</button>
+      <button class="btn secondary" id="floorOff">Off</button>
+      <input type="color" id="floorColor" value="#ffdc96">
+      <button class="btn secondary" id="floorApplyColor">Set colour</button>
+    </div>
+    <label style="display:block;margin-top:10px;">Brightness
+      <input type="range" id="floorBrightness" min="1" max="100" value="50">
+    </label>
+    <div class="presets">
+      <button data-rgb="255,220,150" data-b="60">Warm white</button>
+      <button data-rgb="255,100,0" data-b="60">Orange</button>
+      <button data-rgb="120,0,0" data-b="60">Deep red</button>
+      <button data-rgb="255,60,0" data-b="2">Night light</button>
+    </div>
+  </div>
+
+  <div id="status">Ready.</div>
+  <p><a href="/">← Back to Sunrise Alarm</a></p>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+
+// 24 NEC codes, in physical button order (position 0..23 == cmd 0x00..0x17).
+const CODES = [
+  "F700FF","F7807F","F740BF","F7C03F","F720DF","F7A05F","F7609F","F7E01F",
+  "F710EF","F7906F","F750AF","F7D02F","F730CF","F7B04F","F7708F","F7F00F",
+  "F708F7","F78877","F748B7","F7C837","F728D7","F7A857","F76897","F7E817",
+];
+
+const SUNSET_KEYS = [
+  ["Bright +","#fff"],["Bright −","#fff"],["OFF","#222",1],["ON","#e5483b"],
+  ["R","#e0463a"],["G","#27a060"],["B","#2c48c0"],["W","#fff"],
+  ["Orange-red","#ec6a45"],["Light green","#7ccb5a"],["Light blue","#3d8ce6"],["FLASH","#666",1],
+  ["Orange","#f08a4b"],["Cyan","#56c1d8"],["Purple","#7b2f86",1],["STROBE","#666",1],
+  ["Light orange","#f3a54a"],["Teal","#2a93b5"],["Violet","#7d2a7a",1],["FADE","#666",1],
+  ["Yellow","#f4e02c"],["Dark blue","#1e5d8c",1],["Pink","#d23a8a",1],["SMOOTH","#666",1],
+];
+
+const FLOOR_KEYS = [
+  ["↑","#fff"],["↓","#fff"],["w/ww","#fff"],["⏻","#222",1],
+  ["IC Set","#eee"],["←|→","#7ccb5a"],["→|←","#3d8ce6"],["Auto","#eee"],
+  ["CS","#eee"],["«","#eee"],["»","#eee"],["cycle","#f4e02c"],
+  ["C3","#eee"],["<✱","#eee"],["✱>","#eee"],["Flash","#3d8ce6",1],
+  ["C7","#eee"],["←","#eee"],["→","#eee"],["Jump","#eee"],
+  ["C16","#eee"],["✱··","#eee"],["··✱","#eee"],["Meteor","#666",1],
+];
+
+function renderRemote(elId, keys) {
+  const el = $(elId);
+  keys.forEach(([label, color, dark], i) => {
+    const b = document.createElement("button");
+    b.className = "key";
+    b.style.background = color;
+    if (dark) b.style.color = "#fff";
+    b.textContent = label;
+    b.title = `${label} — ${CODES[i]}`;
+    b.onclick = () => sendIr(CODES[i], b);
+    el.append(b);
+  });
+}
+
+async function sendIr(code, btn) {
+  document.querySelectorAll("button.key").forEach(b => b.classList.remove("sent"));
+  if (btn) btn.classList.add("sent");
+  $("status").textContent = `Sending ${code} …`;
+  try {
+    const r = await fetch("/api/ir", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) });
+    const j = await r.json().catch(() => ({}));
+    $("status").textContent = r.ok ? `Sent ${code}` : `Error: ${j.error || r.status}`;
+  } catch (e) {
+    $("status").textContent = `Network error: ${e.message}`;
+  }
+}
+
+async function postFloor(body) {
+  $("status").textContent = "Sending to floor lamp …";
+  try {
+    const r = await fetch("/api/floor", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    $("status").textContent = r.ok ? "Floor lamp updated" : `Error: ${j.error || r.status}`;
+  } catch (e) {
+    $("status").textContent = `Network error: ${e.message}`;
+  }
+}
+
+function hexToRgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+renderRemote("sunsetRemote", SUNSET_KEYS);
+renderRemote("floorRemote", FLOOR_KEYS);
+
+$("floorOn").onclick = () => postFloor({ power: "on" });
+$("floorOff").onclick = () => postFloor({ power: "off" });
+$("floorApplyColor").onclick = () => postFloor({ rgb: hexToRgb($("floorColor").value) });
+$("floorBrightness").addEventListener("change", () => postFloor({ brightness: +$("floorBrightness").value }));
+
+document.querySelectorAll(".presets button").forEach(btn => {
+  btn.onclick = async () => {
+    const rgb = btn.dataset.rgb.split(",").map(Number);
+    await postFloor({ rgb });
+    await postFloor({ brightness: +btn.dataset.b });
+  };
+});
+</script>
+</body>
+</html>

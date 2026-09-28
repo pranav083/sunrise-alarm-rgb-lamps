@@ -7,7 +7,7 @@ from pathlib import Path
 
 from aiohttp import web
 
-from .floor import FloorDriver
+from .floor import FloorController, FloorDriver
 from .power import Power
 from .scheduler import Scheduler
 from .settings import load
@@ -28,7 +28,8 @@ def make_drivers(settings):
 async def amain(port: int, data: Path) -> None:
     state = {"settings": load(data / "settings.json")}
     scheduler = Scheduler(lambda: state["settings"], make_drivers, power=Power())
-    runner = web.AppRunner(make_app(scheduler, data / "settings.json", state))
+    runner = web.AppRunner(make_app(scheduler, data / "settings.json", state,
+                                     ir_sender=HttpIrSender(), floor_ctrl=FloorController()))
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", port).start()
     logging.getLogger("sunlight").info("listening on :%d", port)

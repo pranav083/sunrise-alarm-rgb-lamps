@@ -13,9 +13,41 @@ class FakeScheduler:
     def running(self): return self.busy
 
 
-async def client_for(aiohttp_client, tmp_path, sch=None):
+class FakeIrSender:
+    def __init__(self, ok=True, raise_error=False):
+        self.sent, self.ok, self.raise_error = [], ok, raise_error
+
+    async def __call__(self, code):
+        if self.raise_error:
+            raise OSError("board unreachable")
+        self.sent.append(code)
+        return self.ok
+
+
+class FakeFloorCtrl:
+    def __init__(self, raise_error=False):
+        self.calls, self.raise_error = [], raise_error
+
+    async def power(self, on):
+        if self.raise_error:
+            raise OSError("lamp unreachable")
+        self.calls.append(("power", on))
+
+    async def rgb(self, r, g, b):
+        if self.raise_error:
+            raise OSError("lamp unreachable")
+        self.calls.append(("rgb", r, g, b))
+
+    async def brightness(self, pct):
+        if self.raise_error:
+            raise OSError("lamp unreachable")
+        self.calls.append(("brightness", pct))
+
+
+async def client_for(aiohttp_client, tmp_path, sch=None, ir_sender=None, floor_ctrl=None):
     state = {"settings": Settings()}
-    app = make_app(sch or FakeScheduler(), tmp_path / "settings.json", state)
+    app = make_app(sch or FakeScheduler(), tmp_path / "settings.json", state,
+                    ir_sender=ir_sender or FakeIrSender(), floor_ctrl=floor_ctrl or FakeFloorCtrl())
     return await aiohttp_client(app), state
 
 
@@ -150,3 +182,120 @@ async def test_sunrise_now_non_int_minutes_is_400(aiohttp_client, tmp_path):
     r = await c.post("/api/sunrise-now", json={"minutes": "x"})
     assert r.status == 400
     assert sch.sunrise_now_calls == []
+
+
+async def test_remote_page_serves_both_remotes(aiohttp_client, tmp_path):
+    c, _ = await client_for(aiohttp_client, tmp_path)
+    r = await c.get("/remote")
+    assert r.status == 200
+    html = await r.text()
+    assert "Sunset lamp" in html and "Floor lamp" in html
+
+
+async def test_index_links_to_remote(aiohttp_client, tmp_path):
+    c, _ = await client_for(aiohttp_client, tmp_path)
+    html = await (await c.get("/")).text()
+    assert "/remote" in html
+
+
+async def test_api_ir_sends_known_code(aiohttp_client, tmp_path):
+    ir = FakeIrSender()
+    c, _ = await client_for(aiohttp_client, tmp_path, ir_sender=ir)
+    r = await c.post("/api/ir", json={"code": "f720df"})
+    assert r.status == 200
+    assert ir.sent == ["F720DF"]
+
+
+async def test_api_ir_unknown_code_400(aiohttp_client, tmp_path):
+    c, _ = await client_for(aiohttp_client, tmp_path)
+    r = await c.post("/api/ir", json={"code": "abcdef"})
+    assert r.status == 400
+
+
+async def test_api_ir_malformed_400(aiohttp_client, tmp_path):
+    c, _ = await client_for(aiohttp_client, tmp_path)
+    assert (await c.post("/api/ir", json={"code": "xyz"})).status == 400
+    assert (await c.post("/api/ir", json={})).status == 400
+    assert (await c.post("/api/ir", data="not json")).status == 400
+
+
+async def test_api_ir_409_while_running(aiohttp_client, tmp_path):
+    sch = FakeScheduler(); sch.busy = True
+    c, _ = await client_for(aiohttp_client, tmp_path, sch)
+    r = await c.post("/api/ir", json={"code": "F720DF"})
+    assert r.status == 409
+
+
+async def test_api_ir_502_on_sender_failure(aiohttp_client, tmp_path):
+    ir = FakeIrSender(ok=False)
+    c, _ = await client_for(aiohttp_client, tmp_path, ir_sender=ir)
+    r = await c.post("/api/ir", json={"code": "F720DF"})
+    assert r.status == 502
+
+
+async def test_api_ir_502_on_sender_raise(aiohttp_client, tmp_path):
+    ir = FakeIrSender(raise_error=True)
+    c, _ = await client_for(aiohttp_client, tmp_path, ir_sender=ir)
+    r = await c.post("/api/ir", json={"code": "F720DF"})
+    assert r.status == 502
+
+
+async def test_api_floor_power(aiohttp_client, tmp_path):
+    fc = FakeFloorCtrl()
+    c, _ = await client_for(aiohttp_client, tmp_path, floor_ctrl=fc)
+    r = await c.post("/api/floor", json={"power": "on"})
+    assert r.status == 200
+    assert fc.calls == [("power", True)]
+
+
+async def test_api_floor_rgb(aiohttp_client, tmp_path):
+    fc = FakeFloorCtrl()
+    c, _ = await client_for(aiohttp_client, tmp_path, floor_ctrl=fc)
+    r = await c.post("/api/floor", json={"rgb": [255, 100, 0]})
+    assert r.status == 200
+    assert fc.calls == [("rgb", 255, 100, 0)]
+
+
+async def test_api_floor_brightness(aiohttp_client, tmp_path):
+    fc = FakeFloorCtrl()
+    c, _ = await client_for(aiohttp_client, tmp_path, floor_ctrl=fc)
+    r = await c.post("/api/floor", json={"brightness": 50})
+    assert r.status == 200
+    assert fc.calls == [("brightness", 50)]
+
+
+async def test_api_floor_invalid_rgb_400(aiohttp_client, tmp_path):
+    c, _ = await client_for(aiohttp_client, tmp_path)
+    assert (await c.post("/api/floor", json={"rgb": [256, 0, 0]})).status == 400
+    assert (await c.post("/api/floor", json={"rgb": [-1, 0, 0]})).status == 400
+    assert (await c.post("/api/floor", json={"rgb": [1, 2]})).status == 400
+
+
+async def test_api_floor_invalid_brightness_400(aiohttp_client, tmp_path):
+    c, _ = await client_for(aiohttp_client, tmp_path)
+    assert (await c.post("/api/floor", json={"brightness": 0})).status == 400
+    assert (await c.post("/api/floor", json={"brightness": 101})).status == 400
+
+
+async def test_api_floor_unknown_key_400(aiohttp_client, tmp_path):
+    c, _ = await client_for(aiohttp_client, tmp_path)
+    assert (await c.post("/api/floor", json={"foo": 1})).status == 400
+
+
+async def test_api_floor_non_json_400(aiohttp_client, tmp_path):
+    c, _ = await client_for(aiohttp_client, tmp_path)
+    assert (await c.post("/api/floor", data="not json")).status == 400
+
+
+async def test_api_floor_409_while_running(aiohttp_client, tmp_path):
+    sch = FakeScheduler(); sch.busy = True
+    c, _ = await client_for(aiohttp_client, tmp_path, sch)
+    r = await c.post("/api/floor", json={"power": "on"})
+    assert r.status == 409
+
+
+async def test_api_floor_502_on_failure(aiohttp_client, tmp_path):
+    fc = FakeFloorCtrl(raise_error=True)
+    c, _ = await client_for(aiohttp_client, tmp_path, floor_ctrl=fc)
+    r = await c.post("/api/floor", json={"power": "on"})
+    assert r.status == 502

@@ -132,6 +132,8 @@ wins over "I'm up"). The same actions are plain HTTP endpoints:
 | `/api/settings` | GET / PUT | read / change wake time, days, length, lamps, alarm on/off |
 | `/api/status` | GET | state, progress, lamp links, next sunrise |
 
+**Remote page (`/remote`):** on-screen copies of both 24-key remotes (each button sends its real NEC code through the ESP8266 board — `POST /api/ir {"code": "F720DF"}`) plus a Bluetooth card for the floor lamp: on/off, colour picker (calibrated), 1–100% brightness and presets — `POST /api/floor` with `{"power": "on"}`, `{"rgb": [255,100,0]}` or `{"brightness": 30}`. Both lamps obey the same IR codes, so aim the IR board at one lamp.
+
 [docs/SHORTCUTS.md](docs/SHORTCUTS.md) shows how to wire these to Apple Shortcuts: "I'm up" when your
 iPhone alarm is stopped, "Hey Siri, lights off", a one-tap "Set sunrise", and "Hey Siri, sunrise now".
 

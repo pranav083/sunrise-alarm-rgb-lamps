@@ -10,6 +10,14 @@ CODES = {
     "on": "F7C03F", "off": "F740BF", "up": "F700FF", "down": "F7807F",
     "R": "F720DF", "OR": "F710EF", "O": "F730CF", "LO": "F708F7", "Y": "F728D7", "W": "F7E01F",
 }
+
+# All 24 NEC codes shared by both remotes (address 0xEF00), in physical button order
+# (cmd 0x00-0x17), from firmware/ir_codes.md. Single source of truth for IR validation.
+ALL_CODES = [
+    "F700FF", "F7807F", "F740BF", "F7C03F", "F720DF", "F7A05F", "F7609F", "F7E01F",
+    "F710EF", "F7906F", "F750AF", "F7D02F", "F730CF", "F7B04F", "F7708F", "F7F00F",
+    "F708F7", "F78877", "F748B7", "F7C837", "F728D7", "F7A857", "F76897", "F7E817",
+]
 # (p threshold, colour, brightness level 0-5) — verified in the IR preview 2026-09-28
 STAGES = [
     (0.00, "R", 0), (0.18, "R", 1), (0.32, "OR", 1), (0.44, "OR", 2), (0.54, "O", 2), (0.63, "O", 3),

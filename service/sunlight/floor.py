@@ -3,7 +3,7 @@ import asyncio
 import logging
 import os
 
-from .curve import curve, floor_values
+from .curve import B_SCALE, G_SCALE, curve, floor_values
 
 log = logging.getLogger("sunlight.floor")
 
@@ -29,6 +29,42 @@ def _bleak_factory(address, disconnected_callback):
     from bleak import BleakClient
     return BleakClient(address, timeout=20, disconnected_callback=disconnected_callback,
                        winrt={"use_cached_services": True})
+
+
+class FloorController:
+    """Short-lived BLE connection for one-off commands from the remote page.
+
+    Connects, sends INIT + the packet(s), disconnects. Serialized with a lock so two
+    taps (or a tap racing the sunrise FloorDriver) don't collide on the same link.
+    """
+
+    def __init__(self, address: str = ADDRESS, client_factory=None):
+        self._address = address
+        self._factory = client_factory or _bleak_factory
+        self._lock = asyncio.Lock()
+
+    async def _send(self, packets: list[bytes]) -> None:
+        async with self._lock:
+            client = self._factory(self._address, lambda _c: None)
+            try:
+                await client.connect()
+                for pkt in INIT + packets:
+                    await client.write_gatt_char(WRITE_CHAR, pkt, response=False)
+                    await asyncio.sleep(0.05)
+            finally:
+                try:
+                    await client.disconnect()
+                except Exception as e:
+                    log.warning("floor controller disconnect failed: %s", e)
+
+    async def power(self, on: bool) -> None:
+        await self._send([POWER_ON if on else POWER_OFF])
+
+    async def rgb(self, r: int, g: int, b: int) -> None:
+        await self._send([color_packet(r, round(g * G_SCALE), round(b * B_SCALE))])
+
+    async def brightness(self, pct: int) -> None:
+        await self._send([brightness_packet(pct)])
 
 
 class FloorDriver:

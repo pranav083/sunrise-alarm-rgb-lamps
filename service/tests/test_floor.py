@@ -1,4 +1,6 @@
 import asyncio
+
+import pytest
 from sunlight.floor import (FloorDriver, POWER_OFF, POWER_ON, brightness_packet, color_packet)
 
 
@@ -84,3 +86,74 @@ async def test_update_while_down_is_silently_skipped():
     FakeClient.instances[0].drop()
     await d.update(0.3)          # must not raise
     await d.close()
+
+
+class FakeCtrlClient(FakeClient):
+    """Auto-connects like a real short-lived BLE connection for FloorController tests."""
+
+
+async def test_controller_rgb_applies_calibration():
+    from sunlight.floor import FloorController
+    FakeClient.instances.clear()
+    ctrl = FloorController(client_factory=FakeClient)
+    await ctrl.rgb(255, 100, 100)
+    w = FakeClient.instances[0].writes
+    assert w == ["7e0783", "7e0404", "7e070503ff1e3c10ef"]
+    assert FakeClient.instances[0].is_connected is False
+
+
+async def test_controller_power_on_off():
+    from sunlight.floor import FloorController
+    FakeClient.instances.clear()
+    ctrl = FloorController(client_factory=FakeClient)
+    await ctrl.power(True)
+    assert FakeClient.instances[0].writes == ["7e0783", "7e0404", "7e0404f00001ff00ef"]
+    await ctrl.power(False)
+    assert FakeClient.instances[1].writes == ["7e0783", "7e0404", "7e0404000000ff00ef"]
+
+
+async def test_controller_brightness():
+    from sunlight.floor import FloorController
+    FakeClient.instances.clear()
+    ctrl = FloorController(client_factory=FakeClient)
+    await ctrl.brightness(42)
+    assert FakeClient.instances[0].writes == ["7e0783", "7e0404", "7e04012aff000000ef"]
+
+
+async def test_controller_serializes_concurrent_calls():
+    import asyncio as _asyncio
+    from sunlight.floor import FloorController
+    FakeClient.instances.clear()
+    ctrl = FloorController(client_factory=FakeClient)
+    await _asyncio.gather(ctrl.power(True), ctrl.power(False), ctrl.brightness(10))
+    assert len(FakeClient.instances) == 3
+    for c in FakeClient.instances:
+        assert len(c.writes) == 3
+
+
+class HangingConnectClient(FakeClient):
+    """connect() hangs forever (simulates a stalled BLE connect attempt)."""
+
+    async def connect(self):
+        await asyncio.Event().wait()
+
+    async def disconnect(self):
+        self.disconnect_called = True
+        self.is_connected = False
+
+
+async def test_controller_disconnects_after_cancelled_connect():
+    import asyncio as _asyncio
+    from sunlight.floor import FloorController
+    FakeClient.instances.clear()
+    ctrl = FloorController(client_factory=HangingConnectClient)
+    with pytest.raises(_asyncio.TimeoutError):
+        await _asyncio.wait_for(ctrl.power(True), timeout=0.05)
+    c = FakeClient.instances[0]
+    assert getattr(c, "disconnect_called", False) is True
+    # lock must be released: a second call proceeds without hanging
+    FakeClient.instances.clear()
+    ctrl2 = FloorController(client_factory=FakeClient)
+    ctrl._factory = FakeClient
+    await _asyncio.wait_for(ctrl.power(True), timeout=1)
+    assert FakeClient.instances[0].writes == ["7e0783", "7e0404", "7e0404f00001ff00ef"]
