@@ -85,3 +85,68 @@ async def test_index_served(aiohttp_client, tmp_path):
     c, _ = await client_for(aiohttp_client, tmp_path)
     r = await c.get("/")
     assert r.status == 200 and "Sunrise" in await r.text()
+
+
+class FakeSchedulerSunriseNow(FakeScheduler):
+    def __init__(self):
+        super().__init__()
+        self.sunrise_now_calls = []
+    def start_sunrise_now(self, minutes): self.sunrise_now_calls.append(minutes)
+
+
+async def test_sunrise_now_happy_path_default_minutes(aiohttp_client, tmp_path):
+    sch = FakeSchedulerSunriseNow()
+    c, state = await client_for(aiohttp_client, tmp_path, sch)
+    r = await c.post("/api/sunrise-now")
+    assert r.status == 202
+    assert (await r.json()) == {"started_minutes": state["settings"].length_min}
+    assert sch.sunrise_now_calls == [state["settings"].length_min]
+
+
+async def test_sunrise_now_explicit_minutes(aiohttp_client, tmp_path):
+    sch = FakeSchedulerSunriseNow()
+    c, _ = await client_for(aiohttp_client, tmp_path, sch)
+    r = await c.post("/api/sunrise-now", json={"minutes": 5})
+    assert r.status == 202
+    assert (await r.json()) == {"started_minutes": 5}
+    assert sch.sunrise_now_calls == [5]
+
+
+async def test_sunrise_now_conflict_when_busy(aiohttp_client, tmp_path):
+    sch = FakeSchedulerSunriseNow(); sch.busy = True
+    c, _ = await client_for(aiohttp_client, tmp_path, sch)
+    r = await c.post("/api/sunrise-now")
+    assert r.status == 409
+    assert sch.sunrise_now_calls == []
+
+
+async def test_sunrise_now_malformed_json_is_400(aiohttp_client, tmp_path):
+    sch = FakeSchedulerSunriseNow()
+    c, _ = await client_for(aiohttp_client, tmp_path, sch)
+    r = await c.post("/api/sunrise-now", data="not json", headers={"Content-Type": "application/json"})
+    assert r.status == 400
+    assert sch.sunrise_now_calls == []
+
+
+async def test_sunrise_now_zero_minutes_is_400(aiohttp_client, tmp_path):
+    sch = FakeSchedulerSunriseNow()
+    c, _ = await client_for(aiohttp_client, tmp_path, sch)
+    r = await c.post("/api/sunrise-now", json={"minutes": 0})
+    assert r.status == 400
+    assert sch.sunrise_now_calls == []
+
+
+async def test_sunrise_now_too_large_minutes_is_400(aiohttp_client, tmp_path):
+    sch = FakeSchedulerSunriseNow()
+    c, _ = await client_for(aiohttp_client, tmp_path, sch)
+    r = await c.post("/api/sunrise-now", json={"minutes": 61})
+    assert r.status == 400
+    assert sch.sunrise_now_calls == []
+
+
+async def test_sunrise_now_non_int_minutes_is_400(aiohttp_client, tmp_path):
+    sch = FakeSchedulerSunriseNow()
+    c, _ = await client_for(aiohttp_client, tmp_path, sch)
+    r = await c.post("/api/sunrise-now", json={"minutes": "x"})
+    assert r.status == 400
+    assert sch.sunrise_now_calls == []

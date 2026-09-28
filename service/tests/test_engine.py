@@ -126,3 +126,25 @@ async def test_finish_now_during_early_connect_wait():
     assert await asyncio.wait_for(task, 2) == "done"
     assert d.ps[-1] == 1.0
     assert "off" not in d.events
+
+
+async def test_finish_now_then_stop_before_wake_stop_wins():
+    clock, d = FakeClock(), FakeDriver()
+    s = Sunrise([d], total_s=100, tick=0.001, clock=clock)
+    task = asyncio.create_task(s.run(begin_at=clock.t))
+    await asyncio.sleep(0.01)
+    s.finish_now()
+    s.stop()
+    assert await asyncio.wait_for(task, 2) == "stopped"
+    assert "off" in d.events
+
+
+async def test_stop_then_finish_now_stop_wins():
+    clock, d = FakeClock(), FakeDriver()
+    s = Sunrise([d], total_s=100, tick=0.001, clock=clock)
+    task = asyncio.create_task(s.run(begin_at=clock.t))
+    await asyncio.sleep(0.01)
+    s.stop()
+    s.finish_now()
+    assert await asyncio.wait_for(task, 2) == "stopped"
+    assert "off" in d.events

@@ -169,6 +169,19 @@ async def test_wake_up_when_idle_does_nothing():
     assert sch.wake_up() is False
 
 
+async def test_demo_wake_up_and_stop_same_tick_lamps_off():
+    d = FakeDriver()
+    sch = Scheduler(lambda: Settings(), lambda s: [d])
+    task = asyncio.create_task(sch.demo(60))
+    await asyncio.sleep(0.05)
+    assert sch.wake_up() is True
+    sch.stop()
+    result = await asyncio.wait_for(task, 2)
+    await _drain(sch)
+    assert result == "stopped"
+    assert "off" in d.events
+
+
 async def test_loop_fires_alarm_once_and_tracks_task(monkeypatch):
     monkeypatch.setattr(scheduler_mod, "TICK_S", 0.01)
     monkeypatch.setattr(scheduler_mod, "PRECONNECT_S", 2)
@@ -202,3 +215,40 @@ async def test_loop_fires_alarm_once_and_tracks_task(monkeypatch):
 
     assert len(calls) == 1
     assert seen_in_tasks == [True]
+
+
+async def test_sunrise_now_runs_alarm_mode_immediately_and_reports():
+    d = FakeDriver()
+    sch = Scheduler(lambda: Settings(hold_min=0), lambda s: [d])
+    sch.start_sunrise_now(0.001)
+    await asyncio.sleep(0.2)
+    await _drain(sch)
+    assert d.events[0] == "start" and ("p", 1.0) in d.events
+    assert sch.last_result.startswith("sunrise-now: done")
+    assert "off" in d.events
+    assert sch.state == "idle"
+
+
+async def test_sunrise_now_stop_mid_run():
+    d = FakeDriver()
+    sch = Scheduler(lambda: Settings(hold_min=0), lambda s: [d])
+    sch.start_sunrise_now(1)
+    await asyncio.sleep(0.05)
+    assert sch.state == "sunrise"
+    sch.stop()
+    await asyncio.sleep(0.1)
+    await _drain(sch)
+    assert sch.last_result.startswith("sunrise-now: stopped")
+    assert "off" in d.events
+
+
+async def test_sunrise_now_wake_up_mid_run_goes_to_done_then_auto_off():
+    d = FakeDriver()
+    sch = Scheduler(lambda: Settings(hold_min=0), lambda s: [d])
+    sch.start_sunrise_now(1)
+    await asyncio.sleep(0.05)
+    assert sch.wake_up() is True
+    await asyncio.sleep(0.1)
+    await _drain(sch)
+    assert sch.last_result.startswith("sunrise-now: done")
+    assert "off" in d.events

@@ -43,6 +43,10 @@ class Scheduler:
     def start_demo(self, seconds: float) -> None:
         self._track(self.demo(seconds))
 
+    def start_sunrise_now(self, minutes: float) -> None:
+        """Manual "sunrise now": real alarm-mode run starting immediately, ignoring settings.enabled."""
+        self._track(self._alarm(datetime.now(), length_min=minutes, label="sunrise-now"))
+
     # ---------- status / control ----------
     def status(self) -> dict:
         ns = next_start(self.get_settings(), datetime.now())
@@ -96,18 +100,19 @@ class Scheduler:
             self.last_result = f"demo: {result} at {datetime.now():%H:%M}"
             return result
 
-    async def _alarm(self, start: datetime) -> None:
+    async def _alarm(self, start: datetime, length_min: float | None = None, label: str = "alarm") -> None:
         async with self._lock:
             self._stop.clear()
             s = self.get_settings()
             self._drivers = self.make_drivers(s)
             if not self._drivers:
-                log.warning("alarm skipped: no lamps enabled at %s", f"{datetime.now():%H:%M}")
-                self.last_result = f"alarm: skipped — no lamps enabled at {datetime.now():%H:%M}"
+                log.warning("%s skipped: no lamps enabled at %s", label, f"{datetime.now():%H:%M}")
+                self.last_result = f"{label}: skipped — no lamps enabled at {datetime.now():%H:%M}"
                 return
             self._awake(True)
             try:
-                self._sunrise = Sunrise(self._drivers, s.length_min * 60, mode="alarm")
+                minutes = s.length_min if length_min is None else length_min
+                self._sunrise = Sunrise(self._drivers, minutes * 60, mode="alarm")
                 self.state = "connecting"
                 run = asyncio.create_task(self._sunrise.run(begin_at=start.timestamp()))
                 while not run.done():
@@ -115,7 +120,7 @@ class Scheduler:
                         self.state = "sunrise"
                     await asyncio.sleep(1)
                 result = run.result()
-                self.last_result = f"alarm: {result} at {datetime.now():%H:%M}"
+                self.last_result = f"{label}: {result} at {datetime.now():%H:%M}"
                 if result == "done":
                     self._lamps_may_be_lit = True
                 if result == "done" and not s.stay_on:

@@ -53,19 +53,24 @@ class Sunrise:
             for t in (stop_task, finish_task):
                 if not t.done():
                     t.cancel()
+        # "Lights off" always wins over "I'm up", even if both fired the same tick.
+        if stop_task in done or self._stop.is_set():
+            return "stop"
         if finish_task in done:
             return "finish"
-        if stop_task in done:
-            return "stop"
         return None
 
     async def _finish_now_done(self) -> str:
+        if self._stop.is_set():
+            return await self._finish("stopped", lamps_off=True)
         self.progress = 1.0
         for d in self.drivers:
             try:
                 await d.update(1.0)
             except Exception:
                 log.exception("%s update failed", d.name)
+        if self._stop.is_set():
+            return await self._finish("stopped", lamps_off=True)
         return await self._finish("done", lamps_off=False)
 
     async def run(self, begin_at: float | None = None) -> str:

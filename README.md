@@ -118,6 +118,23 @@ for a name that only resolves privately.
 5. Aim/position the IR emitter so only the sunset lamp can see it, since both lamps decode the same
    IR codes differently.
 
+## Controls: web page, API and iPhone Shortcuts
+
+The phone web page has **Demo**, **🌅 Sunrise now**, **☀ I'm up** (jump to full brightness and stay
+lit, then the usual hold / auto-off) and **■ Lights off** (cancel and turn both lamps off — always
+wins over "I'm up"). The same actions are plain HTTP endpoints:
+
+| Endpoint | Method | Does |
+|---|---|---|
+| `/api/sunrise-now` | POST `{"minutes": 20}` | start a real sunrise now |
+| `/api/wake` | POST | I'm up |
+| `/api/stop` | POST | Lights off |
+| `/api/settings` | GET / PUT | read / change wake time, days, length, lamps, alarm on/off |
+| `/api/status` | GET | state, progress, lamp links, next sunrise |
+
+[docs/SHORTCUTS.md](docs/SHORTCUTS.md) shows how to wire these to Apple Shortcuts: "I'm up" when your
+iPhone alarm is stopped, "Hey Siri, lights off", a one-tap "Set sunrise", and "Hey Siri, sunrise now".
+
 ## Photos
 
 - `docs/photos/remote-floor-lamp.jpg` — the GCTECHING floor lamp's remote (`SP-03LS3M-RGBPMD`).

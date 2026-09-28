@@ -43,6 +43,7 @@
     <div class="row">
       <select id="demoLen" aria-label="Demo length"><option value="30">30 s</option><option value="60">1 min</option><option value="300">5 min</option></select>
       <button class="btn secondary" id="demo">▶ Demo</button>
+      <button class="btn secondary" id="sunriseNow">🌅 Sunrise now</button>
       <button class="btn" id="wake">☀ I'm up</button>
       <button class="btn" id="stop">■ Lights off</button>
     </div>
@@ -76,6 +77,10 @@ $("save").onclick = async () => {
 $("demo").onclick = async () => {
   const r = await fetch("/api/demo", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({seconds:+$("demoLen").value}) });
   $("msg").textContent = r.ok ? "Demo started" : (await r.json()).error;
+};
+$("sunriseNow").onclick = async () => {
+  const r = await fetch("/api/sunrise-now", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({minutes:+$("length_min").value}) });
+  $("msg").textContent = r.ok ? "Sunrise started" : (await r.json()).error;
 };
 $("wake").onclick = async () => { await fetch("/api/wake", { method:"POST" }); $("msg").textContent = "Enjoy the light ☀"; };
 $("stop").onclick = async () => { await fetch("/api/stop", { method:"POST" }); $("msg").textContent = "Lights off"; };
